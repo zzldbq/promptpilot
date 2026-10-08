@@ -1,0 +1,6 @@
+project_id = "promptpilot"
+
+[functions.promptpilot]
+# Every request is verified with Supabase Auth /user, then with pp_members.
+# This also supports new asymmetric signing keys and browser CORS preflights.
+verify_jwt = false
