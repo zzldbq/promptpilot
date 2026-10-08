@@ -1,4 +1,5 @@
 body:not(.cloud-ready)>aside,body:not(.cloud-ready)>main{display:none}
+[hidden]{display:none!important}
 .cloud-ready #cloudLogin{display:none}
 #cloudLogin{width:min(480px,calc(100% - 32px));margin:70px auto}
 #cloudLogin h1{font-size:30px;color:#12635f}

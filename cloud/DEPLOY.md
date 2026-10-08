@@ -47,7 +47,9 @@ on conflict(email) do update set enabled=true;
 
 只有同时具备 Auth 账号和启用的成员记录才能进入应用。所有获准成员共享所有试用项目及报告；只有 admin 可改模型地址和配置。不要向不应读取这些数据的人开放成员资格。
 
-暂停成员资格：`update public.pp_members set enabled=false where email='该邮箱';`。密码找回目前由管理员在 Supabase 处理，网页没有自助注册或找回密码入口。
+暂停成员资格：`update public.pp_members set enabled=false where email='该邮箱';`。网页没有自助注册或发送找回邮件入口。
+
+密码重置：在 Authentication → URL Configuration 中将 Site URL 设置为 `https://zzldbq.github.io/promptpilot/`，并在 Redirect URLs 添加同一地址。管理员在 Users 中发送密码重置邮件；用户打开最新邮件后，网页会展示设置新密码表单。保存成功后用新密码登录。过期链接需要重新发送，配置地址后应重新发送邮件。链接含临时凭证，不要分享。恢复凭证仅在页面内存中使用，不自动进入工作台或启动评测，刷新重置页面后需重新打开有效邮件链接或重新发送邮件。
 
 ## 四、设置模型密钥和云函数
 
