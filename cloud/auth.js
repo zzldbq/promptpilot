@@ -21,7 +21,7 @@
   async function request(path,body){
     const result=await http('/functions/v1/'+cfg.functionName,{path,body:body||{}},await token());
     if(path==='/api/state'){
-      document.querySelector('#cloudAccount').textContent=result.account.email+' · '+(result.account.role==='admin'?'管理员':'试用成员');
+      document.querySelector('#cloudAccount').textContent=result.account.email+' · '+(result.account.role==='admin'?'管理员':'成员');
       if(result.runs.some(r=>r.status==='running'))startWorker();
     }
     if(path==='/api/runs')startWorker();
@@ -30,9 +30,9 @@
   function startWorker(){if(!worker&&!working&&session)worker=setTimeout(pump,100);}
   async function pump(){
     worker=null;if(working||!session)return;working=true;
-    status('云端评测执行中：请保持网页开启；离开后下次登录可继续待执行案件。');
+    status('评测进行中，请保持网页开启。');
     let again=false,delay=1000;
-    try{const result=await request('/api/step',{});again=result.worked||result.active;if(!result.worked)delay=5000;if(!again)status('云端就绪 · 已完成结果已保存');}
+    try{const result=await request('/api/step',{});again=result.worked||result.active;if(!result.worked)delay=5000;if(!again)status('评测结果已保存');}
     catch(e){status('评测连接暂时中断：'+e.message+'；将重试连接，不自动重复已领取的模型调用。');again=!!session;delay=20000;}
     finally{working=false;if(again&&session)worker=setTimeout(pump,delay);}
   }
