@@ -17,15 +17,66 @@ function project(){return state.projects.find(p=>p.id===pid);}
 function own(kind){return state[kind].filter(x=>x.project_id===pid);}
 function options(items,label,selected=''){return items.map(x=>`<option value="${esc(x.id)}" ${x.id===selected?'selected':''}>${esc(x[label])}</option>`).join('');}
 async function refresh(){state=await api('/api/state');if(!project())pid=state.projects[0]?.id||'';localStorage.setItem('promptpilot.project',pid);$('#projectSelect').innerHTML=state.projects.length?options(state.projects,'name',pid):'<option>请先创建项目</option>';}
-function navigate(next){clearTimeout(timer);page=next;$('#notice').textContent='';$('#heading').textContent=pages[page];$('#nav').innerHTML=Object.entries(pages).map(([k,v],i)=>`<button data-page="${k}" class="${page===k?'active':''}">${v}</button>`).join('');if(!project()&&!['home','models'].includes(page)){$('#content').innerHTML='<div class="card empty">请先创建项目。</div>';return;}({home:home,versions:versions,cases:cases,models:models,run:runForm,reports:reports})[page]();}
+function navigate(next){closeDraft();clearTimeout(timer);page=next;$('#notice').textContent='';$('#heading').textContent=pages[page];$('#nav').innerHTML=Object.entries(pages).map(([k,v],i)=>`<button data-page="${k}" class="${page===k?'active':''}">${v}</button>`).join('');if(!project()&&!['home','models'].includes(page)){$('#content').innerHTML='<div class="card empty">请先创建项目。</div>';return;}({home:home,versions:versions,cases:cases,models:models,run:runForm,reports:reports})[page]();}
 function home(){const p=project();$('#content').innerHTML=`${p?`<div class="stats"><div class="stat">提示词版本<strong>${own('versions').length}</strong></div><div class="stat">测试案件<strong>${own('cases').length}</strong></div><div class="stat">评测记录<strong>${own('runs').length}</strong></div></div><div class="card"><h2>${esc(p.name)}</h2><p>${esc(p.goal)}</p><pre>${esc(p.requirements)}</pre><div class="row"><button data-page="versions">编辑提示词</button><button data-page="cases" class="secondary">管理案件</button><button data-page="reports" class="secondary">查看报告</button></div></div>`:'<div class="card empty">暂无项目。创建项目后，添加提示词和测试案件。</div>'}<div class="card"><h2>新建项目</h2><form id="projectForm"><label>项目名称<input name="name" required placeholder="例如：案件要素提取"></label><label>业务目标<textarea name="goal" required placeholder="说明要完成的任务"></textarea></label><label>输出要求<textarea name="requirements" required placeholder="说明输出格式和字段"></textarea></label><button>创建项目</button></form></div>`;
 $('#projectForm').onsubmit=e=>{e.preventDefault();action(async()=>{const p=await api('/api/projects',Object.fromEntries(new FormData(e.target)));pid=p.id;await refresh();navigate('home');notify('项目已创建。');});};}
-function versions(){const vs=own('versions');$('#content').innerHTML=`<div class="grid"><section><div class="card"><div class="row between"><h2>版本列表</h2><button id="newVersion" class="secondary">新建版本</button></div>${vs.map(v=>`<div><button class="secondary" data-edit-version="${v.id}">${esc(v.number)}</button><p>${esc(v.note)}<br><span class="muted">创建 ${date(v.created_at)}${v.updated_at?' · 更新 '+date(v.updated_at):''}</span></p></div>`).join('')||'<p class="muted">还没有提示词版本</p>'}</div><div class="card"><h2>起草提示词</h2><p class="help">选择模型生成草稿，编辑后保存为版本。</p><form id="draftForm"><label>模型<select name="model_id">${options(state.models,'name')}</select></label><label>业务目标<textarea name="goal" required>${esc(project().goal)}</textarea></label><label>要件说明<textarea name="elements" required placeholder="明确提取规则、缺失信息与边界情况"></textarea></label><label>输出格式<textarea name="format" required>${esc(project().requirements)}</textarea></label><button id="draftButton">生成提示词草稿</button></form></div></section><section><div class="card"><h2 id="editorHeading">新建提示词版本</h2><form id="versionForm"><input type="hidden" name="id"><label>版本号<input name="number" required placeholder="V1 / V2"></label><label>修改说明<input name="note" required></label><label>提示词正文<textarea class="code" name="text" rows="14" required>请根据以下虚构案件提取信息，仅输出 JSON。\n案件：{{case_input}}</textarea></label><p class="help">必须保留 {{case_input}}；历史评测保存文本快照，不受后续编辑影响。</p><button>保存版本</button></form></div><div class="card"><h2>版本文本差异</h2><div class="grid"><label>旧版本<select id="diffOld">${options(vs,'number')}</select></label><label>新版本<select id="diffNew">${options(vs,'number',vs[1]?.id)}</select></label></div><button id="diff" class="secondary">查看差异</button><div id="diffOutput"></div></div></section></div>`;
-function reset(){const f=$('#versionForm');f.reset();f.elements.id.value='';$('#editorHeading').textContent='新建提示词版本';}$('#newVersion').onclick=reset;
-document.querySelectorAll('[data-edit-version]').forEach(b=>b.onclick=()=>{const v=vs.find(v=>v.id===b.dataset.editVersion);const f=$('#versionForm');['id','number','note','text'].forEach(k=>f.elements[k].value=v[k]);$('#editorHeading').textContent='编辑 '+v.number;});
-$('#versionForm').onsubmit=e=>{e.preventDefault();action(async()=>{await api('/api/versions',{...Object.fromEntries(new FormData(e.target)),project_id:pid});await refresh();navigate('versions');notify('版本已保存。');});};
-$('#draftForm').onsubmit=e=>{e.preventDefault();generateDraft(e.target);};
-$('#diff').onclick=()=>{const a=vs.find(v=>v.id===$('#diffOld').value),b=vs.find(v=>v.id===$('#diffNew').value);if(!a||!b)return;$('#diffOutput').innerHTML=lineDiff(a.text,b.text);};}
+let versionListPage=1;
+function versionPage(items,index){const pages=Math.max(1,Math.ceil(items.length/10));const current=Math.max(1,Math.min(index,pages));return {pages,current,items:items.slice((current-1)*10,current*10)};}
+function toast(message,error=false,detail=''){
+  let host=$('#toastHost');if(!host){host=document.createElement('div');host.id='toastHost';host.className='toast-host';document.body.appendChild(host);}
+  const dialog=$('#draftDialog');if(dialog)dialog.appendChild(host);else document.body.appendChild(host);
+  const item=document.createElement('div');item.className='toast '+(error?'toast-error':'toast-success');item.setAttribute('role',error?'alert':'status');
+  item.innerHTML=`<div><strong>${esc(message)}</strong>${detail?`<p>${esc(detail)}</p>`:''}</div><button type="button" aria-label="关闭提示">×</button>`;
+  item.querySelector('button').onclick=()=>item.remove();host.appendChild(item);setTimeout(()=>item.remove(),5000);
+}
+function closeDraft(){const dialog=$('#draftDialog');if(dialog){dialog.close();dialog.remove();}}
+function versions(){
+  versionListPage=1;
+  $('#content').innerHTML=`<div id="versionWorkspace" class="version-workspace"><section class="card"><div class="row between"><h2>版本列表</h2><div class="row"><button id="newVersion" class="secondary">新建版本</button><button id="compareVersions" class="secondary">对比版本</button></div></div><div id="versionList"></div><div id="versionPagination" class="pagination"></div></section><section class="card"><div class="row between"><h2 id="editorHeading">新建提示词版本</h2><button id="openDraft" class="secondary">AI 起草提示词</button></div><form id="versionForm"><fieldset id="versionFields"><input type="hidden" name="id"><label>版本号<input name="number" required placeholder="V1 / V2"></label><label>修改说明<input name="note" required></label><label>提示词正文<textarea class="code" name="text" rows="18" required>请根据以下虚构案件提取信息，仅输出 JSON。\n案件：{{case_input}}</textarea></label><p class="help">保留 {{case_input}} 作为案件输入位置。</p></fieldset><div class="row"><button id="saveVersion">保存版本</button><span id="versionSaveStatus" class="muted" role="status"></span></div></form></section></div><section id="versionComparison" class="card" hidden></section>`;
+  $('#newVersion').onclick=()=>{if($('#saveVersion').disabled)return;closeDraft();$('#versionForm').reset();$('#versionForm').elements.id.value='';$('#editorHeading').textContent='新建提示词版本';$('#openDraft').hidden=false;renderVersionList();};
+  $('#openDraft').onclick=openDraft;
+  $('#compareVersions').onclick=showVersionComparison;
+  $('#versionForm').onsubmit=e=>{e.preventDefault();saveVersion(e.target);};
+  renderVersionList();
+}
+function renderVersionList(){
+  const vs=own('versions').slice().reverse(),p=versionPage(vs,versionListPage);versionListPage=p.current;
+  const selected=$('#versionForm').elements.id.value;
+  $('#versionList').innerHTML=p.items.map(v=>`<button class="version-item ${selected===v.id?'selected':''}" data-edit-version="${esc(v.id)}"><strong>${esc(v.number)}</strong><span>${esc(v.note)}</span><small>${date(v.created_at)}</small></button>`).join('')||'<p class="muted">暂无版本，请新建。</p>';
+  $('#versionPagination').innerHTML=`<span>共 ${vs.length} 个版本</span><button type="button" id="versionsPrev" class="secondary" ${p.current===1?'disabled':''}>上一页</button><label class="page-picker">第 <select id="versionsPage">${Array.from({length:p.pages},(_,i)=>`<option value="${i+1}" ${i+1===p.current?'selected':''}>${i+1}</option>`).join('')}</select> / ${p.pages} 页</label><button type="button" id="versionsNext" class="secondary" ${p.current===p.pages?'disabled':''}>下一页</button>`;
+  $('#versionsPrev').onclick=()=>{versionListPage--;renderVersionList();};$('#versionsNext').onclick=()=>{versionListPage++;renderVersionList();};$('#versionsPage').onchange=e=>{versionListPage=Number(e.target.value);renderVersionList();};
+  document.querySelectorAll('[data-edit-version]').forEach(b=>b.onclick=()=>{
+    if($('#saveVersion').disabled)return;closeDraft();const v=vs.find(x=>x.id===b.dataset.editVersion),f=$('#versionForm');
+    ['id','number','note','text'].forEach(k=>f.elements[k].value=v[k]);$('#editorHeading').textContent='编辑 '+v.number;$('#openDraft').hidden=true;renderVersionList();
+  });
+}
+function openDraft(){
+  if($('#versionForm').elements.id.value||$('#saveVersion').disabled)return;
+  const dialog=document.createElement('dialog');dialog.id='draftDialog';dialog.className='draft-dialog';
+  dialog.innerHTML=`<div class="row between"><h2>AI 起草提示词</h2><button type="button" id="draftBack" class="secondary">返回</button></div><form id="draftForm"><label>模型<select name="model_id" required>${state.models.map(m=>`<option value="${esc(m.id)}" ${m.configured?'':'disabled'}>${esc(m.name)}${m.configured?'':'（未配置密钥）'}</option>`).join('')}</select></label><label>业务目标<textarea name="goal" required>${esc(project().goal)}</textarea></label><label>要件说明<textarea name="elements" required placeholder="填写提取规则和需要关注的情况"></textarea></label><label>输出格式<textarea name="format" required>${esc(project().requirements)}</textarea></label><button id="draftButton">生成提示词草稿</button><p class="help">生成后填入新建版本的正文，不自动保存。返回后不会再写入生成结果。</p></form>`;
+  $('#content').appendChild(dialog);$('#draftBack').onclick=closeDraft;dialog.addEventListener('cancel',e=>{e.preventDefault();closeDraft();});$('#draftForm').onsubmit=e=>{e.preventDefault();generateDraft(e.target);};dialog.showModal();
+}
+function showVersionComparison(){
+  closeDraft();const vs=own('versions');$('#versionWorkspace').hidden=true;const panel=$('#versionComparison');panel.hidden=false;
+  panel.innerHTML=`<div class="row between"><h2>版本文本差异</h2><button id="comparisonBack" class="secondary">返回</button></div><div class="grid"><label>旧版本<select id="diffOld">${options(vs,'number')}</select></label><label>新版本<select id="diffNew">${options(vs,'number',vs[1]?.id)}</select></label></div><button id="diff" class="secondary" ${vs.length<2?'disabled':''}>查看差异</button><div id="diffOutput">${vs.length<2?'<p class="muted">至少保存两个版本后可进行对比。</p>':''}</div>`;
+  $('#comparisonBack').onclick=()=>{panel.hidden=true;$('#versionWorkspace').hidden=false;};
+  $('#diff').onclick=()=>{const a=vs.find(v=>v.id===$('#diffOld').value),b=vs.find(v=>v.id===$('#diffNew').value);if(!a||!b)return;if(a.id===b.id){$('#diffOutput').textContent='请选择两个不同的版本。';return;}$('#diffOutput').innerHTML=lineDiff(a.text,b.text);};
+}
+async function saveVersion(form){
+  const button=$('#saveVersion'),status=$('#versionSaveStatus'),fields=$('#versionFields');if(button.disabled)return;
+  const projectId=pid,payload={...Object.fromEntries(new FormData(form)),project_id:pid};
+  button.disabled=true;fields.disabled=true;$('#openDraft').disabled=true;status.textContent='正在保存中......';
+  const active=()=>pid===projectId&&form===$('#versionForm');
+  try{
+    const saved=await api('/api/versions',payload);
+    if(!active())return;
+    const index=state.versions.findIndex(v=>v.id===saved.id);if(index<0)state.versions.push(saved);else state.versions[index]=saved;
+    form.elements.id.value=saved.id;$('#editorHeading').textContent='编辑 '+saved.number;$('#openDraft').hidden=true;
+    if(!payload.id)versionListPage=1;renderVersionList();toast('保存成功');
+  }catch(e){if(active())toast('保存失败',true,e.message);}
+  finally{button.disabled=false;fields.disabled=false;status.textContent='';if(active())$('#openDraft').disabled=false;}
+}
+
 function lineDiff(a,b){const x=a.split('\n'),y=b.split('\n');if(x.length*y.length>500000)return `<div class="grid"><pre>${esc(a)}</pre><pre>${esc(b)}</pre></div>`;const dp=Array.from({length:x.length+1},()=>new Uint32Array(y.length+1));for(let i=x.length-1;i>=0;i--)for(let j=y.length-1;j>=0;j--)dp[i][j]=x[i]===y[j]?1+dp[i+1][j+1]:Math.max(dp[i+1][j],dp[i][j+1]);let i=0,j=0,out='';while(i<x.length||j<y.length){if(i<x.length&&j<y.length&&x[i]===y[j]){out+=`<div class="diff-line">  ${esc(x[i++])}</div>`;j++;}else if(j<y.length&&(i===x.length||dp[i][j+1]>=dp[i+1][j]))out+=`<div class="diff-line diff-add">+ ${esc(y[j++])}</div>`;else out+=`<div class="diff-line diff-remove">− ${esc(x[i++])}</div>`;}return `<p class="help">绿色 + 新增；红色 − 删除</p>${out}`;}
 function cases(){const cs=own('cases');$('#content').innerHTML=`<div class="grid"><div class="card"><div class="row between"><h2>测试案件（${cs.length}）</h2><button id="newCase" class="secondary">新增案件</button></div>${cs.map(c=>`<details><summary>${esc(c.name)} <span class="pill">${esc(c.tag)}</span></summary><p class="muted">测试集：${esc(c.suite)}</p><p>${esc(c.input)}</p><pre>${esc(pretty(c.expected))}</pre><div class="row"><button class="secondary" data-edit-case="${c.id}">编辑</button><button class="danger" data-delete-case="${c.id}">删除</button></div></details>`).join('')||'<p class="muted">暂无案件，请添加测试案件。</p>'}</div><div class="card"><h2 id="caseHeading">新增案件</h2><form id="caseForm"><input name="id" type="hidden"><label>案件名称<input name="name" required></label><div class="grid"><label>场景标签<input name="tag" required placeholder="缺失信息"></label><label>测试集名称<input name="suite" value="默认测试集" required></label></div><label>案件输入<textarea name="input" required rows="5"></textarea></label><label>预期结果（JSON）<textarea name="expected" class="code" required>{}</textarea></label><label>必填字段（逗号分隔）<input name="required" placeholder="例如 amount, conclusion"></label><label>需人工判断的字段（逗号分隔）<input name="manual_fields" placeholder="例如 conclusion, rationale"></label><p class="help">预期字段自动视为必填；人工字段只检查存在性，正确性标记为待人工复核。其他字段按严格类型和值比较，数组顺序也参与比较。</p><button>保存案件</button></form></div></div>`;
 $('#newCase').onclick=()=>{$('#caseForm').reset();$('#caseForm').elements.id.value='';$('#caseHeading').textContent='新增案件';};document.querySelectorAll('[data-edit-case]').forEach(b=>b.onclick=()=>{const c=cs.find(x=>x.id===b.dataset.editCase),f=$('#caseForm');['id','name','tag','suite','input'].forEach(k=>f.elements[k].value=c[k]);f.elements.expected.value=pretty(c.expected);f.elements.required.value=c.required.join(', ');f.elements.manual_fields.value=c.manual_fields.join(', ');$('#caseHeading').textContent='编辑案件';});
@@ -66,6 +117,7 @@ async function generateDraft(form){
   const unchangedPage=()=>pid===projectId&&form===$('#draftForm')&&editor===$('#versionForm');
   const snapshot=()=>JSON.stringify(Object.fromEntries(new FormData(editor)));
   const original=snapshot();
+  if(editor.elements.id.value)return;
   button.disabled=true;button.textContent='模型生成中…';
   try{
     const data=await api('/api/draft',Object.fromEntries(new FormData(form)));
@@ -75,15 +127,15 @@ async function generateDraft(form){
       if(!preview){preview=document.createElement('div');preview.id='draftPreview';form.appendChild(preview);}
       preview.innerHTML='<label>生成的草稿（编辑器已修改，未自动覆盖）<textarea readonly rows="8"></textarea></label>';
       preview.querySelector('textarea').value=data.draft;
-      notify('草稿已生成；保留了你正在编辑的内容，请从草稿预览中按需复制。');
+      return;
       return;
     }
-    editor.reset();editor.elements.id.value='';
+    editor.elements.id.value='';
     $('#editorHeading').textContent='新建提示词版本';
     editor.elements.text.value=data.draft;
-    editor.elements.note.value='模型起草，待审核';
-    notify('草稿已生成，请检查后保存。');
-  }catch(e){if(unchangedPage())notify(e.message,true);}
+    if(!editor.elements.note.value)editor.elements.note.value='模型起草，待审核';
+    closeDraft();
+  }catch(e){if(unchangedPage())toast('生成失败',true,e.message);}
   finally{button.disabled=false;button.textContent='生成提示词草稿';}
 }
 

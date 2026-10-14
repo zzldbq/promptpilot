@@ -17,7 +17,7 @@ function setup(){
   }});
   vm.runInContext(source,context);
   vm.runInContext("pid='project-a';page='reports';currentRun='run-a';",context);
-  const editor={elements:{id:{value:'v1'},text:{value:'original'},note:{value:'note'}},reset(){for(const v of Object.values(this.elements))v.value='';}};
+  const editor={elements:{id:{value:''},number:{value:'V3'},text:{value:'original'},note:{value:'note'}},reset(){for(const v of Object.values(this.elements))v.value='';}};
   const form={elements:{goal:{value:'goal'}}};
   nodes['#versionForm']=editor;nodes['#draftForm']=form;
   let resolve,reject;
@@ -53,7 +53,64 @@ test('unchanged editor receives draft normally',async()=>{
   h.resolve({draft:'AI draft'});await pending;
   assert.equal(h.editor.elements.text.value,'AI draft');
   assert.equal(h.editor.elements.id.value,'');
+  assert.equal(h.editor.elements.number.value,'V3');
+  assert.equal(h.editor.elements.note.value,'note');
   assert.equal(h.nodes['#draftButton'].disabled,false);
+});
+
+test('editing an existing version cannot invoke AI drafting',async()=>{
+  const h=setup();h.editor.elements.id.value='v1';let called=false;h.context.api=()=>{called=true;};
+  await h.context.generateDraft(h.form);assert.equal(called,false);
+});
+test('pagination clamps boundaries and shows ten versions at a time',()=>{
+  const h=setup(),items=Array.from({length:203},(_,i)=>i);
+  const first=h.context.versionPage(items,0),last=h.context.versionPage(items,99);
+  assert.equal(first.current,1);assert.equal(first.items.length,10);
+  assert.equal(last.current,21);assert.equal(last.items.length,3);assert.equal(last.items[0],200);
+  assert.equal(h.context.versionPage([],8).current,1);
+});
+test('return from AI ignores late response without clearing new-version fields',async()=>{
+  const h=setup(),pending=h.context.generateDraft(h.form);
+  delete h.nodes['#draftForm'];h.resolve({draft:'discarded draft'});await pending;
+  assert.equal(h.editor.elements.text.value,'original');assert.equal(h.editor.elements.number.value,'V3');
+});
+test('save displays inline pending status and prevents duplicate requests',async()=>{
+  const h=setup();vm.runInContext("state={versions:[]}",h.context);
+  h.nodes['#saveVersion']={};h.nodes['#versionSaveStatus']={};h.nodes['#versionFields']={};h.nodes['#openDraft']={};
+  const notices=[];h.context.toast=(...a)=>notices.push(a);h.context.renderVersionList=()=>{};
+  const pending=h.context.saveVersion(h.editor);assert.equal(h.nodes['#saveVersion'].disabled,true);
+  assert.match(h.nodes['#versionSaveStatus'].textContent,/正在保存/);
+  await h.context.saveVersion(h.editor);h.resolve({id:'new-id',number:'V3'});await pending;
+  assert.equal(h.editor.elements.id.value,'new-id');assert.equal(h.nodes['#openDraft'].hidden,true);
+  assert.equal(h.nodes['#versionSaveStatus'].textContent,'');assert.equal(notices[0][0],'保存成功');
+});
+test('save failure keeps unsaved text and restores controls',async()=>{
+  const h=setup();h.nodes['#saveVersion']={};h.nodes['#versionSaveStatus']={};h.nodes['#versionFields']={};h.nodes['#openDraft']={};
+  let notice;h.context.toast=(...a)=>notice=a;
+  const pending=h.context.saveVersion(h.editor);h.reject(new Error('network unavailable'));await pending;
+  assert.equal(h.editor.elements.text.value,'original');assert.equal(h.nodes['#saveVersion'].disabled,false);
+  assert.equal(notice[0],'保存失败');assert.equal(notice[2],'network unavailable');
+});
+test('comparison return preserves editor identity, contents and pagination',()=>{
+  const h=setup();vm.runInContext("state={versions:[{id:'a',project_id:'project-a',number:'V1',text:'a'},{id:'b',project_id:'project-a',number:'V2',text:'b'}]};versionListPage=8",h.context);
+  for(const id of ['versionWorkspace','versionComparison','comparisonBack','diff','diffOutput'])h.nodes['#'+id]={};
+  h.nodes['#diffOld']={value:'a'};h.nodes['#diffNew']={value:'b'};
+  h.context.showVersionComparison();assert.equal(h.nodes['#versionWorkspace'].hidden,true);
+  h.nodes['#diff'].onclick();assert.match(h.nodes['#diffOutput'].innerHTML,/diff-add/);
+  h.nodes['#comparisonBack'].onclick();assert.equal(h.nodes['#versionWorkspace'].hidden,false);
+  assert.equal(h.editor.elements.text.value,'original');assert.equal(vm.runInContext('versionListPage',h.context),8);
+});
+test('AI failure uses dismissible toast pathway instead of page banner',async()=>{
+  const h=setup();let notice;h.context.toast=(...a)=>notice=a;
+  const pending=h.context.generateDraft(h.form);h.reject(new Error('provider error'));await pending;
+  assert.deepEqual(notice,['生成失败',true,'provider error']);assert.equal(h.nodes['#notice'].textContent,undefined);
+});
+test('toast is dismissible and expires after five seconds',()=>{
+  const h=setup();let click,expire,delay,removed=0;
+  const item={setAttribute(){},querySelector:()=>({set onclick(v){click=v;}}),remove(){removed++;}};
+  h.nodes['#toastHost']={appendChild(){}};h.document.body={appendChild(){}};
+  h.document.createElement=()=>item;h.context.setTimeout=(f,ms)=>{expire=f;delay=ms;};
+  h.context.toast('保存成功');assert.equal(delay,5000);click();expire();assert.equal(removed,2);
 });
 test('late draft error does not appear on a different page',async()=>{
   const h=setup(),pending=h.context.generateDraft(h.form);
