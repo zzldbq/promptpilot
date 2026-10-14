@@ -77,3 +77,19 @@ def all_items(kind):
 def delete(kind, identifier):
     with connection() as db:
         db.execute('DELETE FROM entities WHERE kind=? AND id=?', (kind, identifier))
+
+
+def delete_project(identifier, confirmation):
+    with connection() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute("SELECT data FROM entities WHERE kind='project' AND id=?", (identifier,)).fetchone()
+        if not row:
+            raise ValueError('项目不存在或已删除')
+        if confirmation != json.loads(row[0])['name']:
+            raise ValueError('项目名称不匹配，未删除')
+        if db.execute("SELECT 1 FROM entities WHERE kind='run' AND json_extract(data,'$.project_id')=? AND json_extract(data,'$.status')='running'", (identifier,)).fetchone():
+            raise ValueError('项目有评测正在运行，请等待完成后再删除')
+        db.execute("DELETE FROM entities WHERE kind IN ('result','review') AND json_extract(data,'$.run_id') IN (SELECT id FROM entities WHERE kind='run' AND json_extract(data,'$.project_id')=?)", (identifier,))
+        db.execute("DELETE FROM entities WHERE kind IN ('version','case','suite','run') AND json_extract(data,'$.project_id')=?", (identifier,))
+        db.execute("DELETE FROM entities WHERE kind='project' AND id=?", (identifier,))
+        return {'ok': True}

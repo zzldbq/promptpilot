@@ -85,6 +85,8 @@ def report(identifier):
 def mutate(path, body):
     if path == '/api/projects':
         return db.save('project', {'name': text_value(body, 'name', 150), 'goal': text_value(body, 'goal'), 'requirements': text_value(body, 'requirements')})
+    if path == '/api/projects/delete':
+        return db.delete_project(body.get('id'), body.get('confirm_name'))
     if path == '/api/demo':
         return create_demo()
     if path == '/api/seed':
@@ -194,7 +196,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(403, {'error': '仅允许本机访问'})
             path = urlparse(self.path).path
             if path == '/api/state':
-                return self.send_json(200, {'suites': db.all_items('suite'), 'projects': db.all_items('project'), 'versions': db.all_items('version'), 'cases': db.all_items('case'), 'models': [model_public(m) for m in db.all_items('model')], 'runs': [{k: v for k, v in r.items() if k != 'snapshot'} for r in db.all_items('run')]})
+                return self.send_json(200, {'features': {'delete_project': True}, 'suites': db.all_items('suite'), 'projects': db.all_items('project'), 'versions': db.all_items('version'), 'cases': db.all_items('case'), 'models': [model_public(m) for m in db.all_items('model')], 'runs': [{k: v for k, v in r.items() if k != 'snapshot'} for r in db.all_items('run')]})
             if path.startswith('/api/runs/'):
                 return self.send_json(200, report(path.split('/')[-1]))
             files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}

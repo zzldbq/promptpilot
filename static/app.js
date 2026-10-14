@@ -17,14 +17,42 @@ function project(){return state.projects.find(p=>p.id===pid);}
 function own(kind){return state[kind].filter(x=>x.project_id===pid);}
 function options(items,label,selected=''){return items.map(x=>`<option value="${esc(x.id)}" ${x.id===selected?'selected':''}>${esc(x[label])}</option>`).join('');}
 async function refresh(){state=await api('/api/state');if(!project())pid=state.projects[0]?.id||'';localStorage.setItem('promptpilot.project',pid);$('#projectSelect').innerHTML=state.projects.length?options(state.projects,'name',pid):'<option>请先创建项目</option>';}
-function navigate(next){closeSuite();closeDraft();clearTimeout(timer);page=next;$('#notice').textContent='';$('#heading').textContent=pages[page];$('#nav').innerHTML=Object.entries(pages).map(([k,v],i)=>`<button data-page="${k}" class="${page===k?'active':''}">${v}</button>`).join('');if(!project()&&!['home','models'].includes(page)){$('#content').innerHTML='<div class="card empty">请先创建项目。</div>';return;}({home:home,versions:versions,cases:cases,models:models,run:runForm,reports:reports})[page]();}
-function home(){const p=project();$('#content').innerHTML=`${p?`<div class="stats"><div class="stat">提示词版本<strong>${own('versions').length}</strong></div><div class="stat">测试案件<strong>${own('cases').length}</strong></div><div class="stat">评测记录<strong>${own('runs').length}</strong></div></div><div class="card"><h2>${esc(p.name)}</h2><p>${esc(p.goal)}</p><pre>${esc(p.requirements)}</pre><div class="row"><button data-page="versions">编辑提示词</button><button data-page="cases" class="secondary">管理案件</button><button data-page="reports" class="secondary">查看报告</button></div></div>`:'<div class="card empty">暂无项目。创建项目后，添加提示词和测试案件。</div>'}<div class="card"><h2>新建项目</h2><form id="projectForm"><label>项目名称<input name="name" required placeholder="例如：案件要素提取"></label><label>业务目标<textarea name="goal" required placeholder="说明要完成的任务"></textarea></label><label>输出要求<textarea name="requirements" required placeholder="说明输出格式和字段"></textarea></label><button>创建项目</button></form></div>`;
+function navigate(next){closeProjectDelete();closeSuite();closeDraft();clearTimeout(timer);page=next;$('#notice').textContent='';$('#heading').textContent=pages[page];$('#nav').innerHTML=Object.entries(pages).map(([k,v],i)=>`<button data-page="${k}" class="${page===k?'active':''}">${v}</button>`).join('');if(!project()&&!['home','models'].includes(page)){$('#content').innerHTML='<div class="card empty">请先创建项目。</div>';return;}({home:home,versions:versions,cases:cases,models:models,run:runForm,reports:reports})[page]();}
+function home(){const p=project();$('#content').innerHTML=`${p?`<div class="stats"><div class="stat">提示词版本<strong>${own('versions').length}</strong></div><div class="stat">测试案件<strong>${own('cases').length}</strong></div><div class="stat">评测记录<strong>${own('runs').length}</strong></div></div><div class="card"><div class="row between"><h2>${esc(p.name)}</h2>${!state.account||state.account.role==='admin'?'<button id="deleteProject" class="danger">删除项目</button>':''}</div><p>${esc(p.goal)}</p><pre>${esc(p.requirements)}</pre><div class="row"><button data-page="versions">编辑提示词</button><button data-page="cases" class="secondary">管理案件</button><button data-page="reports" class="secondary">查看报告</button></div></div>`:'<div class="card empty">暂无项目。创建项目后，添加提示词和测试案件。</div>'}<div class="card"><h2>新建项目</h2><form id="projectForm"><label>项目名称<input name="name" required placeholder="例如：案件要素提取"></label><label>业务目标<textarea name="goal" required placeholder="说明要完成的任务"></textarea></label><label>输出要求<textarea name="requirements" required placeholder="说明输出格式和字段"></textarea></label><button>创建项目</button></form></div>`;
+if($('#deleteProject'))$('#deleteProject').onclick=openProjectDelete;
 $('#projectForm').onsubmit=e=>{e.preventDefault();action(async()=>{const p=await api('/api/projects',Object.fromEntries(new FormData(e.target)));pid=p.id;await refresh();navigate('home');notify('项目已创建。');});};}
+function closeProjectDelete(){const d=$('#projectDeleteDialog');if(d){d.close();d.remove();}}
+function openProjectDelete(){
+  if(state.account&&state.account.role!=='admin')return;
+  if(!state.features?.delete_project){toast('删除项目功能待启用',true,'请先完成数据库升级并更新云函数。');return;}
+  const p=project();if(own('runs').some(r=>r.status==='running')){toast('暂时不能删除',true,'此项目有评测正在运行，请等待完成。');return;}
+  const dialog=document.createElement('dialog');dialog.id='projectDeleteDialog';dialog.className='draft-dialog';
+  dialog.innerHTML=`<div class="row between"><h2>删除项目</h2><button id="cancelProjectDelete" class="secondary" type="button">返回</button></div><p>将永久删除项目 <strong>${esc(p.name)}</strong>。</p><p>包括 ${own('versions').length} 个提示词版本、${own('cases').length} 个案件、${suiteNames().length} 个测试集、${own('runs').length} 次评测，以及相关输出和复核记录。此操作不可撤销。</p><p class="help">其他项目、模型配置和登录账号不受影响。</p><form id="projectDeleteForm"><label>输入完整项目名称以确认<input name="confirm_name" required autocomplete="off"></label><button id="confirmProjectDelete" class="danger" disabled>永久删除项目</button><span id="projectDeleteStatus" class="muted" role="status"></span></form>`;
+  $('#content').appendChild(dialog);$('#cancelProjectDelete').onclick=closeProjectDelete;dialog.addEventListener('cancel',e=>{e.preventDefault();if(!$('#projectDeleteForm').dataset.busy)closeProjectDelete();});
+  const form=$('#projectDeleteForm');form.elements.confirm_name.oninput=()=>{$('#confirmProjectDelete').disabled=form.elements.confirm_name.value!==p.name;};form.onsubmit=e=>{e.preventDefault();deleteProject(form,p);};dialog.showModal();
+}
+async function deleteProject(form,p){
+  if(form.dataset.busy||form.elements.confirm_name.value!==p.name)return;
+  const button=$('#confirmProjectDelete'),cancel=$('#cancelProjectDelete'),status=$('#projectDeleteStatus');
+  form.dataset.busy='true';button.disabled=true;cancel.disabled=true;form.elements.confirm_name.disabled=true;status.textContent='正在删除中......';
+  try{
+    await api('/api/projects/delete',{id:p.id,confirm_name:form.elements.confirm_name.value});
+    if(form!==$('#projectDeleteForm'))return;
+    const runIds=new Set(state.runs.filter(r=>r.project_id===p.id).map(r=>r.id));
+    state.projects=state.projects.filter(x=>x.id!==p.id);
+    for(const k of ['versions','cases','suites','runs'])if(state[k])state[k]=state[k].filter(x=>x.project_id!==p.id);
+    if(runIds.has(currentRun))currentRun=null;
+    pid=state.projects[0]?.id||'';localStorage.setItem('promptpilot.project',pid);
+    $('#projectSelect').innerHTML=state.projects.length?options(state.projects,'name',pid):'<option>请先创建项目</option>';
+    closeProjectDelete();navigate('home');toast('项目已删除');
+  }catch(e){if(form===$('#projectDeleteForm'))toast('删除失败',true,e.message);}
+  finally{delete form.dataset.busy;button.disabled=false;cancel.disabled=false;form.elements.confirm_name.disabled=false;status.textContent='';}
+}
 let versionListPage=1;
 function versionPage(items,index){const pages=Math.max(1,Math.ceil(items.length/10));const current=Math.max(1,Math.min(index,pages));return {pages,current,items:items.slice((current-1)*10,current*10)};}
 function toast(message,error=false,detail=''){
   let host=$('#toastHost');if(!host){host=document.createElement('div');host.id='toastHost';host.className='toast-host';document.body.appendChild(host);}
-  const dialog=$('#draftDialog')||$('#suiteDialog');if(dialog)dialog.appendChild(host);else document.body.appendChild(host);
+  const dialog=$('#draftDialog')||$('#suiteDialog')||$('#projectDeleteDialog');if(dialog)dialog.appendChild(host);else document.body.appendChild(host);
   const item=document.createElement('div');item.className='toast '+(error?'toast-error':'toast-success');item.setAttribute('role',error?'alert':'status');
   item.innerHTML=`<div><strong>${esc(message)}</strong>${detail?`<p>${esc(detail)}</p>`:''}</div><button type="button" aria-label="关闭提示">×</button>`;
   item.querySelector('button').onclick=()=>item.remove();host.appendChild(item);setTimeout(()=>item.remove(),5000);

@@ -146,6 +146,48 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['name'], '原有分组')
 
+    def test_delete_project_cascades_only_target_and_checks_name(self):
+        target = self.request('/api/demo', {})
+        other = self.request('/api/demo', {})
+        run = next(r for r in db.all_items('run') if r['project_id'] == target['id'])
+        result = next(r for r in db.all_items('result') if r['run_id'] == run['id'])
+        review = self.request('/api/reviews', {'result_id': result['id'], 'conclusion': '认可', 'note': 'test'})
+        self.request('/api/suites', {'project_id': target['id'], 'name': '空集'})
+        models = db.all_items('model')
+        with self.assertRaises(urllib.error.HTTPError):
+            self.request('/api/projects/delete', {'id': target['id'], 'confirm_name': 'wrong'})
+        self.assertEqual(db.get('project', target['id'])['id'], target['id'])
+        self.request('/api/projects/delete', {'id': target['id'], 'confirm_name': target['name']})
+        self.assertFalse(any(r['run_id'] == run['id'] for r in db.all_items('result')))
+        self.assertFalse(any(r['id'] == review['id'] for r in db.all_items('review')))
+        for kind in ['version','case','suite','run']:
+            self.assertFalse(any(r['project_id'] == target['id'] for r in db.all_items(kind)))
+        self.assertEqual(db.get('project', other['id'])['id'], other['id'])
+        self.assertEqual(db.all_items('model'), models)
+
+    def test_delete_running_project_is_rejected(self):
+        p = self.request('/api/projects', {'name': 'busy', 'goal': 'test', 'requirements': 'JSON'})
+        r = db.save('run', {'project_id': p['id'], 'status': 'running'})
+        with self.assertRaises(urllib.error.HTTPError):
+            self.request('/api/projects/delete', {'id': p['id'], 'confirm_name': p['name']})
+        self.assertEqual(db.get('run', r['id'])['status'], 'running')
+        db.save('run', {**r, 'status': 'completed'})
+        self.request('/api/projects/delete', {'id': p['id'], 'confirm_name': p['name']})
+
+    def test_project_delete_transaction_rolls_back_on_failure(self):
+        p = self.request('/api/demo', {})
+        r = next(r for r in db.all_items('run') if r.get('project_id') == p['id'])
+        with db.connection() as conn:
+            conn.execute("CREATE TRIGGER prevent_case_delete BEFORE DELETE ON entities WHEN old.kind='case' BEGIN SELECT RAISE(ABORT,'test rollback'); END")
+        try:
+            with self.assertRaises(urllib.error.HTTPError):
+                self.request('/api/projects/delete', {'id': p['id'], 'confirm_name': p['name']})
+            self.assertEqual(db.get('project', p['id'])['id'], p['id'])
+            self.assertTrue(any(x['run_id'] == r['id'] for x in db.all_items('result')))
+        finally:
+            with db.connection() as conn:
+                conn.execute('DROP TRIGGER prevent_case_delete')
+
     def test_demo_c_d_and_immutable_snapshot_review(self):
         project = self.request('/api/demo', {})
         state = self.request('/api/state')

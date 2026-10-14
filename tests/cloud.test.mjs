@@ -83,6 +83,23 @@ test('new empty suite is saved through atomic RPC with trimmed name',async()=>{
   }});
   const r=await h.handler(req('/api/suites',{project_id:'p',name:' 空集 '}));assert.equal(r.status,200);assert.equal((await r.json()).name,'空集');
 });
+test('members cannot delete a project even with its correct name',async()=>{
+  const h=harness();const r=await h.handler(req('/api/projects/delete',{id:'p',confirm_name:'项目'}));
+  assert.notEqual(r.status,200);assert.match((await r.json()).error,/只有管理员/);assert.equal(h.calls.length,2);
+});
+test('admin deletion requires exact name then delegates to atomic RPC',async()=>{
+  let deleted=0;const h=harness({role:'admin',route:(url,o)=>{
+    if(url.includes('id=eq.p&kind=eq.project'))return json([{data:{id:'p',name:'项目'}}]);
+    if(url.endsWith('/rpc/pp_delete_project')){deleted++;assert.deepEqual(JSON.parse(o.body),{p_id:'p',p_name:'项目'});return json({ok:true});}
+    throw Error(url);
+  }});
+  assert.notEqual((await h.handler(req('/api/projects/delete',{id:'p',confirm_name:'wrong'}))).status,200);assert.equal(deleted,0);
+  assert.equal((await h.handler(req('/api/projects/delete',{id:'p',confirm_name:'项目'}))).status,200);assert.equal(deleted,1);
+});
+test('database refusal of running project propagates without success',async()=>{
+  const h=harness({role:'admin',route:(url)=>url.includes('id=eq.p&kind=eq.project')?json([{data:{id:'p',name:'项目'}}]):json({message:'项目有评测正在运行'},400)});
+  const r=await h.handler(req('/api/projects/delete',{id:'p',confirm_name:'项目'}));assert.notEqual(r.status,200);assert.match((await r.json()).error,/正在运行/);
+});
 test('suite creation reports duplicate RPC errors instead of success',async()=>{
   const h=harness({route:(url)=>url.includes('id=eq.p&kind=eq.project')?json([{data:{id:'p'}}]):json({message:'项目内测试集名称不能重复'},400)});
   const r=await h.handler(req('/api/suites',{project_id:'p',name:'重复'}));assert.notEqual(r.status,200);assert.match((await r.json()).error,/不能重复/);

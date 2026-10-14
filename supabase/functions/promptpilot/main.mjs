@@ -65,11 +65,17 @@ export function createHandler(env,fetcher=fetch){
     if(path==='/api/state'){
       const [projects,versions,cases,models,runs,suites]=await Promise.all(['project','version','case','model','run','suite'].map(x=>items(x)));
       if(!models.some(x=>x.id===defaultModel.id))models.unshift(defaultModel);
-      return {projects,versions,cases,suites,models:models.map(m=>({...m,configured:modelKeys.includes(m.key_env)&&!!env(m.key_env)})),runs:runs.map(({snapshot,...r})=>r),account:{email:user.email,role:member.role}};
+      return {features:{delete_project:true},projects,versions,cases,suites,models:models.map(m=>({...m,configured:modelKeys.includes(m.key_env)&&!!env(m.key_env)})),runs:runs.map(({snapshot,...r})=>r),account:{email:user.email,role:member.role}};
     }
     if(path==='/api/step')return executeOne();
     if(path.startsWith('/api/runs/'))return report(path.slice('/api/runs/'.length));
     if(path==='/api/projects')return save('project',{name:text(b,'name',150),goal:text(b,'goal'),requirements:text(b,'requirements'),created_by:user.id});
+    if(path==='/api/projects/delete'){
+      if(member.role!=='admin')throw new Error('只有管理员可以删除项目');
+      const p=await get('project',b.id);
+      if(b.confirm_name!==p.name)throw new Error('项目名称不匹配，未删除');
+      return rpc('pp_delete_project',{p_id:p.id,p_name:b.confirm_name});
+    }
     if(path==='/api/suites'){
       await get('project',b.project_id);
       return rpc('pp_ensure_suite',{p_project:b.project_id,p_name:text(b,'name',150),p_fail_duplicate:true});

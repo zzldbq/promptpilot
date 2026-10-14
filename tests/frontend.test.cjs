@@ -89,6 +89,19 @@ test('suite choices merge persisted empty suites with legacy case groups by proj
   const h=setup();vm.runInContext("state={suites:[{project_id:'project-a',name:'空集'},{project_id:'other',name:'其他项目'}],cases:[{project_id:'project-a',suite:'旧分组'},{project_id:'project-a',suite:'旧分组'}]}",h.context);
   const names=Array.from(h.context.suiteNames());assert.equal(names.length,2);assert.ok(names.includes('空集'));assert.ok(names.includes('旧分组'));
 });
+test('project delete does not send request when typed name mismatches',async()=>{
+  const h=setup();let called=false;h.context.api=()=>{called=true;};
+  await h.context.deleteProject({dataset:{},elements:{confirm_name:{value:'wrong'}}},{id:'p',name:'项目'});
+  assert.equal(called,false);
+});
+test('failed project deletion preserves data and restores confirmation controls',async()=>{
+  const h=setup(),form={dataset:{},elements:{confirm_name:{value:'项目'}}};
+  h.nodes['#projectDeleteForm']=form;for(const id of ['confirmProjectDelete','cancelProjectDelete','projectDeleteStatus'])h.nodes['#'+id]={};
+  vm.runInContext("state={projects:[{id:'p',name:'项目'}]}",h.context);let notice;h.context.toast=(...args)=>notice=args;
+  const pending=h.context.deleteProject(form,{id:'p',name:'项目'});assert.equal(h.nodes['#confirmProjectDelete'].disabled,true);
+  h.reject(new Error('正在运行'));await pending;
+  assert.equal(vm.runInContext('state.projects.length',h.context),1);assert.equal(notice[0],'删除失败');assert.equal(form.elements.confirm_name.disabled,false);
+});
 test('return from AI ignores late response without clearing new-version fields',async()=>{
   const h=setup(),pending=h.context.generateDraft(h.form);
   delete h.nodes['#draftForm'];h.resolve({draft:'discarded draft'});await pending;

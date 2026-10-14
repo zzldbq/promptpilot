@@ -41,6 +41,7 @@ deploy=ROOT/'cloud/deploy';deploy.mkdir(exist_ok=True)
 (deploy/'promptpilot.ts').write_text('// @ts-nocheck\n'+bundle,encoding='utf-8')
 sql=(ROOT/'supabase/migrations/202610080001_promptpilot.sql').read_text(encoding='utf-8')
 sql += '\n'+(ROOT/'supabase/migrations/202610140001_case_suites.sql').read_text(encoding='utf-8')
+sql += '\n'+(ROOT/'supabase/migrations/202610140002_delete_project.sql').read_text(encoding='utf-8')
 if args.admin_email:
     email=args.admin_email.strip().lower().replace("'","''")
     sql += f"\ninsert into public.pp_members(email,role) values ('{email}','admin') on conflict(email) do update set role='admin',enabled=true;\n"
