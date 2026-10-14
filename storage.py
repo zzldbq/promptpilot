@@ -29,6 +29,27 @@ def init():
     with connection() as db:
         db.execute('CREATE TABLE IF NOT EXISTS entities (kind TEXT NOT NULL, id TEXT PRIMARY KEY, data TEXT NOT NULL)')
         db.execute('CREATE INDEX IF NOT EXISTS entity_kind ON entities(kind)')
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS suite_name ON entities(json_extract(data,'$.project_id'),json_extract(data,'$.name')) WHERE kind='suite'")
+        rows = db.execute("SELECT data FROM entities WHERE kind='case'").fetchall()
+        for row in rows:
+            case = json.loads(row[0])
+            name = case.get('suite')
+            if name:
+                item = {'id': uuid.uuid4().hex, 'project_id': case['project_id'], 'name': name, 'created_at': now()}
+                db.execute("INSERT OR IGNORE INTO entities(kind,id,data) VALUES ('suite',?,?)", (item['id'], json.dumps(item, ensure_ascii=False)))
+
+
+def ensure_suite(project_id, name, fail_duplicate=False):
+    with connection() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute("SELECT data FROM entities WHERE kind='suite' AND json_extract(data,'$.project_id')=? AND json_extract(data,'$.name')=?", (project_id, name)).fetchone()
+        if row:
+            if fail_duplicate:
+                raise ValueError('项目内测试集名称不能重复')
+            return json.loads(row[0])
+        item = {'id': uuid.uuid4().hex, 'project_id': project_id, 'name': name, 'created_at': now()}
+        db.execute("INSERT INTO entities(kind,id,data) VALUES ('suite',?,?)", (item['id'], json.dumps(item, ensure_ascii=False)))
+        return item
 
 
 def save(kind, item):

@@ -74,6 +74,28 @@ test('public configuration never includes service/model key values',async()=>{
 test('members cannot change model destination or secrets references',async()=>{
   const h=harness();const r=await h.handler(req('/api/models',{name:'x'}));assert.match((await r.json()).error,/只有管理员/);assert.equal(h.calls.length,2);
 });
+
+test('new empty suite is saved through atomic RPC with trimmed name',async()=>{
+  const h=harness({route:(url,o)=>{
+    if(url.includes('id=eq.p&kind=eq.project'))return json([{data:{id:'p'}}]);
+    if(url.endsWith('/rpc/pp_ensure_suite')){const b=JSON.parse(o.body);assert.deepEqual(b,{p_project:'p',p_name:'空集',p_fail_duplicate:true});return json({id:'s',project_id:'p',name:'空集'});}
+    throw new Error(url);
+  }});
+  const r=await h.handler(req('/api/suites',{project_id:'p',name:' 空集 '}));assert.equal(r.status,200);assert.equal((await r.json()).name,'空集');
+});
+test('suite creation reports duplicate RPC errors instead of success',async()=>{
+  const h=harness({route:(url)=>url.includes('id=eq.p&kind=eq.project')?json([{data:{id:'p'}}]):json({message:'项目内测试集名称不能重复'},400)});
+  const r=await h.handler(req('/api/suites',{project_id:'p',name:'重复'}));assert.notEqual(r.status,200);assert.match((await r.json()).error,/不能重复/);
+});
+test('deleting a legacy case persists its suite before deletion',async()=>{
+  const steps=[];
+  const h=harness({route:(url,o)=>{
+    if(o.method==='GET')return json([{data:{id:'c',project_id:'p',suite:'旧分组'}}]);
+    if(url.endsWith('/rpc/pp_ensure_suite')){steps.push('suite');assert.equal(JSON.parse(o.body).p_fail_duplicate,false);return json({id:'s'});}
+    if(o.method==='DELETE'){steps.push('delete');return json([]);}
+    throw new Error(url);
+  }});assert.equal((await h.handler(req('/api/cases/delete',{id:'c'}))).status,200);assert.deepEqual(steps,['suite','delete']);
+});
 test('one queue claim calls one model and stores a deterministic result',async()=>{
   let result;const c={id:'c',input:'fictional',expected:{ok:true},required:['ok'],manual_fields:[]};
   const h=harness({route:(url,o)=>{

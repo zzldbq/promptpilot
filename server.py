@@ -93,6 +93,12 @@ def mutate(path, body):
             raise ValueError('示例仅可导入空项目，避免重复或覆盖已有数据')
         seed_project(project)
         return {'ok': True}
+    if path == '/api/suites':
+        db.get('project', body.get('project_id'))
+        name = text_value(body, 'name', 150)
+        if any(c['project_id'] == body['project_id'] and c['suite'] == name for c in db.all_items('case')):
+            raise ValueError('项目内测试集名称不能重复')
+        return db.ensure_suite(body['project_id'], name, True)
     if path in ['/api/versions', '/api/cases']:
         pid = body.get('project_id')
         db.get('project', pid)
@@ -114,9 +120,12 @@ def mutate(path, body):
             if not isinstance(expected, dict):
                 raise ValueError('预期结果必须是 JSON 对象')
             item.update(name=text_value(body, 'name', 150), tag=text_value(body, 'tag', 150), suite=text_value(body, 'suite', 150), input=text_value(body, 'input'), expected=expected, required=string_list(body, 'required'), manual_fields=string_list(body, 'manual_fields'))
+        if kind == 'case':
+            db.ensure_suite(pid, item['suite'])
         return db.save(kind, item)
     if path == '/api/cases/delete':
-        db.get('case', body.get('id'))
+        old = db.get('case', body.get('id'))
+        db.ensure_suite(old['project_id'], old['suite'])
         db.delete('case', body['id'])
         return {'ok': True}
     if path == '/api/models':
@@ -185,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(403, {'error': '仅允许本机访问'})
             path = urlparse(self.path).path
             if path == '/api/state':
-                return self.send_json(200, {'projects': db.all_items('project'), 'versions': db.all_items('version'), 'cases': db.all_items('case'), 'models': [model_public(m) for m in db.all_items('model')], 'runs': [{k: v for k, v in r.items() if k != 'snapshot'} for r in db.all_items('run')]})
+                return self.send_json(200, {'suites': db.all_items('suite'), 'projects': db.all_items('project'), 'versions': db.all_items('version'), 'cases': db.all_items('case'), 'models': [model_public(m) for m in db.all_items('model')], 'runs': [{k: v for k, v in r.items() if k != 'snapshot'} for r in db.all_items('run')]})
             if path.startswith('/api/runs/'):
                 return self.send_json(200, report(path.split('/')[-1]))
             files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}

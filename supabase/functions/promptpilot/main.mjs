@@ -63,13 +63,17 @@ export function createHandler(env,fetcher=fetch){
   }
   async function dispatch(path,b,user,member){
     if(path==='/api/state'){
-      const [projects,versions,cases,models,runs]=await Promise.all(['project','version','case','model','run'].map(x=>items(x)));
+      const [projects,versions,cases,models,runs,suites]=await Promise.all(['project','version','case','model','run','suite'].map(x=>items(x)));
       if(!models.some(x=>x.id===defaultModel.id))models.unshift(defaultModel);
-      return {projects,versions,cases,models:models.map(m=>({...m,configured:modelKeys.includes(m.key_env)&&!!env(m.key_env)})),runs:runs.map(({snapshot,...r})=>r),account:{email:user.email,role:member.role}};
+      return {projects,versions,cases,suites,models:models.map(m=>({...m,configured:modelKeys.includes(m.key_env)&&!!env(m.key_env)})),runs:runs.map(({snapshot,...r})=>r),account:{email:user.email,role:member.role}};
     }
     if(path==='/api/step')return executeOne();
     if(path.startsWith('/api/runs/'))return report(path.slice('/api/runs/'.length));
     if(path==='/api/projects')return save('project',{name:text(b,'name',150),goal:text(b,'goal'),requirements:text(b,'requirements'),created_by:user.id});
+    if(path==='/api/suites'){
+      await get('project',b.project_id);
+      return rpc('pp_ensure_suite',{p_project:b.project_id,p_name:text(b,'name',150),p_fail_duplicate:true});
+    }
     if(path==='/api/seed'){
       await get('project',b.project_id);const existing=await db(`pp_entities?kind=in.(version,case)&data->>project_id=eq.${b.project_id}&limit=1`);if(existing.length)throw new Error('只可向空项目导入示例');
       const s=seed(b.project_id);await bulk([...s.versions.map(x=>['version',x]),...s.cases.map(x=>['case',x])]);return {ok:true};
@@ -98,9 +102,10 @@ export function createHandler(env,fetcher=fetch){
         if(!isObject(parsed.data))throw new Error('预期结果必须是 JSON 对象');
         Object.assign(data,{name:text(b,'name',150),tag:text(b,'tag',150),suite:text(b,'suite',150),input:text(b,'input'),expected:parsed.data,expected_types:parsed.numberTypes,expected_json:b.expected_json,required:list(b,'required'),manual_fields:list(b,'manual_fields')});
       }
+      if(kind==='case')await rpc('pp_ensure_suite',{p_project:b.project_id,p_name:data.suite,p_fail_duplicate:false});
       return saveExisting(kind,data);
     }
-    if(path==='/api/cases/delete'){await get('case',b.id);await db('pp_entities?id=eq.'+b.id+'&kind=eq.case','DELETE');return {ok:true};}
+    if(path==='/api/cases/delete'){const c=await get('case',b.id);await rpc('pp_ensure_suite',{p_project:c.project_id,p_name:c.suite,p_fail_duplicate:false});await db('pp_entities?id=eq.'+b.id+'&kind=eq.case','DELETE');return {ok:true};}
     if(path==='/api/models'){
       if(member.role!=='admin')throw new Error('只有管理员可以修改模型配置');
       const data={name:text(b,'name',100),base_url:text(b,'base_url',2000).replace(/\/$/,''),model:text(b,'model',150),key_env:text(b,'key_env',100)};checkModel(data);

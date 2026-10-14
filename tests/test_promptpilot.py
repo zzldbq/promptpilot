@@ -124,6 +124,28 @@ class IntegrationTests(unittest.TestCase):
         self.assertIsNone(result['raw'])
         self.assertIn('未配置', result['error'])
 
+    def test_empty_suite_duplicate_and_last_case_deletion(self):
+        p = self.request('/api/projects', {'name': 'suite-test', 'goal': 'test', 'requirements': 'JSON'})
+        suite = self.request('/api/suites', {'project_id': p['id'], 'name': ' 空测试集 '})
+        self.assertEqual(suite['name'], '空测试集')
+        self.assertTrue(any(s['id'] == suite['id'] for s in self.request('/api/state')['suites']))
+        with self.assertRaises(urllib.error.HTTPError):
+            self.request('/api/suites', {'project_id': p['id'], 'name': '空测试集'})
+        case = self.request('/api/cases', {'project_id': p['id'], 'name': 'a', 'tag': 'test', 'suite': '空测试集', 'input': 'fictional', 'expected': {}, 'required': [], 'manual_fields': []})
+        self.request('/api/cases/delete', {'id': case['id']})
+        db.init()
+        self.assertTrue(any(s['id'] == suite['id'] for s in self.request('/api/state')['suites']))
+        p2 = self.request('/api/projects', {'name': 'other', 'goal': 'test', 'requirements': 'JSON'})
+        self.request('/api/suites', {'project_id': p2['id'], 'name': '空测试集'})
+
+    def test_legacy_suite_migration_is_idempotent(self):
+        p = self.request('/api/projects', {'name': 'legacy', 'goal': 'test', 'requirements': 'JSON'})
+        db.save('case', {'project_id': p['id'], 'suite': '原有分组'})
+        db.init(); db.init()
+        rows = [s for s in db.all_items('suite') if s['project_id'] == p['id']]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['name'], '原有分组')
+
     def test_demo_c_d_and_immutable_snapshot_review(self):
         project = self.request('/api/demo', {})
         state = self.request('/api/state')

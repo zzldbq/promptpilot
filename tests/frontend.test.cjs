@@ -69,6 +69,16 @@ test('pagination clamps boundaries and shows ten versions at a time',()=>{
   assert.equal(last.current,21);assert.equal(last.items.length,3);assert.equal(last.items[0],200);
   assert.equal(h.context.versionPage([],8).current,1);
 });
+test('case pagination filters before paging and clamps after deletion',()=>{
+  const h=setup(),rows=Array.from({length:31},(_,i)=>({id:i,suite:i<21?'甲':'乙'}));
+  const result=h.context.casePage(rows,'甲',3);assert.equal(result.items.length,1);assert.equal(result.items[0].id,20);
+  const after=h.context.casePage(rows.filter(c=>c.id!==20),'甲',3);assert.equal(after.current,2);assert.equal(after.items.length,10);
+  assert.equal(h.context.casePage(rows,'空集',5).items.length,0);
+});
+test('suite choices merge persisted empty suites with legacy case groups by project',()=>{
+  const h=setup();vm.runInContext("state={suites:[{project_id:'project-a',name:'空集'},{project_id:'other',name:'其他项目'}],cases:[{project_id:'project-a',suite:'旧分组'},{project_id:'project-a',suite:'旧分组'}]}",h.context);
+  const names=Array.from(h.context.suiteNames());assert.equal(names.length,2);assert.ok(names.includes('空集'));assert.ok(names.includes('旧分组'));
+});
 test('return from AI ignores late response without clearing new-version fields',async()=>{
   const h=setup(),pending=h.context.generateDraft(h.form);
   delete h.nodes['#draftForm'];h.resolve({draft:'discarded draft'});await pending;
