@@ -75,6 +75,16 @@ test('case pagination filters before paging and clamps after deletion',()=>{
   const after=h.context.casePage(rows.filter(c=>c.id!==20),'甲',3);assert.equal(after.current,2);assert.equal(after.items.length,10);
   assert.equal(h.context.casePage(rows,'空集',5).items.length,0);
 });
+test('run suite selection renders only selected cases and clears old selections',()=>{
+  const h=setup();vm.runInContext("state={cases:[{id:'a',project_id:'project-a',suite:'甲',name:'甲案',tag:'常见'},{id:'b',project_id:'project-a',suite:'乙',name:'乙案',tag:'边界'}]}",h.context);
+  h.nodes['#suite']={value:'甲'};h.nodes['#runCaseList']={};h.nodes['#startRun']={};
+  const input={};let checked=true;h.document.querySelectorAll=s=>s==='#runCaseList input'?[input]:s==='#runCaseList input:checked'&&checked?[input]:[];
+  h.context.renderRunCases();assert.match(h.nodes['#runCaseList'].innerHTML,/甲案/);assert.ok(!h.nodes['#runCaseList'].innerHTML.includes('乙案'));assert.equal(h.nodes['#startRun'].disabled,false);
+  h.nodes['#suite'].value='乙';h.context.renderRunCases();assert.match(h.nodes['#runCaseList'].innerHTML,/乙案/);assert.ok(!h.nodes['#runCaseList'].innerHTML.includes('甲案'));
+  checked=false;input.onchange();assert.equal(h.nodes['#startRun'].disabled,true);
+  h.nodes['#suite'].value='空集';h.context.renderRunCases();assert.match(h.nodes['#runCaseList'].innerHTML,/暂无案件/);assert.equal(h.nodes['#startRun'].disabled,true);
+  h.nodes['#suite'].value='';h.context.renderRunCases();assert.match(h.nodes['#runCaseList'].innerHTML,/请先选择/);
+});
 test('suite choices merge persisted empty suites with legacy case groups by project',()=>{
   const h=setup();vm.runInContext("state={suites:[{project_id:'project-a',name:'空集'},{project_id:'other',name:'其他项目'}],cases:[{project_id:'project-a',suite:'旧分组'},{project_id:'project-a',suite:'旧分组'}]}",h.context);
   const names=Array.from(h.context.suiteNames());assert.equal(names.length,2);assert.ok(names.includes('空集'));assert.ok(names.includes('旧分组'));
